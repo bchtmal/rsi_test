@@ -1,13 +1,19 @@
 # Crypto Signal Bot
 
-Bot giám sát và cảnh báo tín hiệu giao dịch tiền điện tử qua Telegram. Hiện tại, bot hỗ trợ cảnh báo khi RSI của BTC giảm dưới ngưỡng cài đặt (mặc định là 30).
+Bot giám sát và cảnh báo tín hiệu giao dịch tiền điện tử qua Telegram. Bot hỗ trợ phân tích kỹ thuật kết hợp RSI và MACD để đưa ra tín hiệu giao dịch chính xác hơn.
 
 ## Tính năng
 
 - Kết nối Binance qua CCXT để lấy dữ liệu giá theo thời gian thực
-- Tính toán chỉ báo RSI sử dụng thư viện TA
-- Gửi cảnh báo qua Telegram khi có tín hiệu
-- Có thể tùy chỉnh cặp tiền, khung thời gian và ngưỡng RSI
+- Tính toán chỉ báo RSI và MACD sử dụng thư viện TA
+- Chiến lược giao dịch kết hợp RSI + MACD:
+  - **Long**: RSI < 30 (oversold) + MACD bullish (MACD > Signal hoặc có bullish crossover)
+  - **Short**: RSI > 70 (overbought) + MACD bearish (MACD < Signal hoặc có bearish crossover)
+  - **Exit**: RSI về mức 50 (neutral)
+- Gửi cảnh báo chi tiết qua Telegram với thông tin RSI và MACD
+- Hỗ trợ nhiều cặp tiền đồng thời
+- Tính toán PnL và thống kê giao dịch
+- Có thể tùy chỉnh tất cả các thông số kỹ thuật
 
 ## Yêu cầu
 
@@ -44,9 +50,21 @@ BINANCE_SECRET_KEY=your_binance_secret_key
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_CHAT_ID=your_telegram_chat_id
 
-# Bot settings
+# Bot settings - RSI
 RSI_THRESHOLD=30
 RSI_TIMEFRAME=1h
+RSI_WINDOW=14
+RSI_OVERSOLD=30
+RSI_OVERBOUGHT=70
+RSI_EXIT=50
+
+# Bot settings - MACD
+MACD_FAST=12
+MACD_SLOW=26
+MACD_SIGNAL=9
+
+# Trading pairs
+TRADING_PAIRS=BTC/USDT,ETH/USDT,SOL/USDT
 COIN_SYMBOL=BTC/USDT
 
 # Proxy settings (optional)
@@ -82,17 +100,22 @@ python test_proxy.py
 
 ## Chạy Bot
 
-### Bot giám sát RSI:
+### Bot giám sát RSI + MACD (Trading Bot):
 ```
 python main.py
 ```
 
-### Bot Telegram chat:
+### Bot Telegram chat (AI Assistant):
 ```
-python telegram_bot.py
+python crypto_agent.py
 ```
 
-Bot sẽ tự động chạy và gửi cảnh báo qua Telegram khi RSI của BTC giảm dưới ngưỡng đã cài đặt.
+Bot trading sẽ tự động chạy và gửi cảnh báo qua Telegram khi có tín hiệu kết hợp từ RSI và MACD.
+
+### Chạy với dữ liệu mock để test:
+```
+python main.py --mock
+```
 
 ## Thêm cặp tiền khác
 
@@ -103,10 +126,25 @@ COIN_SYMBOL=SOL/USDT
 
 ## Tùy chỉnh cảnh báo
 
-Sửa ngưỡng RSI và khung thời gian trong file `.env`:
+### Cấu hình RSI:
 ```
-RSI_THRESHOLD=35  # Thay đổi ngưỡng RSI
-RSI_TIMEFRAME=4h  # Thay đổi khung thời gian (1m, 5m, 15m, 1h, 4h, 1d)
+RSI_WINDOW=14        # Số nến để tính RSI
+RSI_OVERSOLD=30      # Ngưỡng quá bán (tín hiệu long)
+RSI_OVERBOUGHT=70    # Ngưỡng quá mua (tín hiệu short)
+RSI_EXIT=50          # Ngưỡng thoát lệnh
+RSI_TIMEFRAME=4h     # Khung thời gian (1m, 5m, 15m, 1h, 4h, 1d)
+```
+
+### Cấu hình MACD:
+```
+MACD_FAST=12         # EMA nhanh
+MACD_SLOW=26         # EMA chậm
+MACD_SIGNAL=9        # EMA của đường Signal
+```
+
+### Cấu hình cặp giao dịch:
+```
+TRADING_PAIRS=BTC/USDT,ETH/USDT,SOL/USDT,ADA/USDT
 ```
 
 ## Đóng góp

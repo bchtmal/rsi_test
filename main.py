@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 import telegram
 from telegram.request import HTTPXRequest
 from ta.momentum import RSIIndicator
+from ta.trend import MACD
 import random
 import argparse
 import datetime
@@ -99,6 +100,16 @@ TRADING_PAIRS = os.getenv('TRADING_PAIRS', 'BTC/USDT,ETH/USDT,SOL/USDT,SUI/USDT'
 RSI_OVERSOLD = int(os.getenv('RSI_OVERSOLD', 30))
 RSI_OVERBOUGHT = int(os.getenv('RSI_OVERBOUGHT', 70))
 RSI_EXIT = int(os.getenv('RSI_EXIT', 50))
+
+# Các thông số MACD
+MACD_FAST = int(os.getenv('MACD_FAST', 12))
+MACD_SLOW = int(os.getenv('MACD_SLOW', 26))
+MACD_SIGNAL = int(os.getenv('MACD_SIGNAL', 9))
+
+# Cấu hình signal mode
+SIGNAL_MODE = os.getenv('SIGNAL_MODE', 'BOTH')  # RSI, MACD, BOTH
+RSI_INDEPENDENT = os.getenv('RSI_INDEPENDENT', 'true').lower() == 'true'
+MACD_INDEPENDENT = os.getenv('MACD_INDEPENDENT', 'true').lower() == 'true'
 
 class MockBinance:
     """Class giả lập dữ liệu từ Binance cho việc test"""
@@ -201,6 +212,11 @@ class CryptoSignalBot:
         # Thêm biến để lưu message ID
         self.entry_message_id = None  # Lưu message ID khi mở lệnh
         
+        # Cấu hình signal mode
+        self.signal_mode = SIGNAL_MODE
+        self.rsi_independent = RSI_INDEPENDENT
+        self.macd_independent = MACD_INDEPENDENT
+        
     def _init_exchange(self):
         """Khởi tạo kết nối với sàn Binance hoặc mock Binance"""
         try:
@@ -264,6 +280,26 @@ class CryptoSignalBot:
             logger.error(f"Lỗi khi tính toán RSI: {e}")
             return None
     
+    def calculate_macd(self, df, fast=MACD_FAST, slow=MACD_SLOW, signal=MACD_SIGNAL):
+        """Tính toán chỉ báo MACD từ dữ liệu giá"""
+        if df is None or len(df) < slow:
+            return None
+            
+        try:
+            macd_indicator = MACD(
+                close=df['close'], 
+                window_fast=fast,
+                window_slow=slow,
+                window_sign=signal
+            )
+            df['macd'] = macd_indicator.macd()
+            df['macd_signal'] = macd_indicator.macd_signal()
+            df['macd_histogram'] = macd_indicator.macd_diff()
+            return df
+        except Exception as e:
+            logger.error(f"Lỗi khi tính toán MACD: {e}")
+            return None
+    
     def calculate_pnl(self, entry_price, exit_price, position_type):
         """Tính toán PnL với đòn bẩy x20"""
         if entry_price is None or exit_price is None:
@@ -292,107 +328,240 @@ class CryptoSignalBot:
             
         return self.calculate_pnl(self.entry_price, current_price, self.current_position)
     
-    def check_entry_conditions(self, df):
-        """Kiểm tra điều kiện vào lệnh long/short dựa trên RSI"""
+    def check_rsi_signal(self, df):
+        """Kiểm tra tín hiệu RSI độc lập"""
         if df is None or 'rsi' not in df.columns:
             return None
             
-        # Lấy giá trị RSI mới nhất
         latest_rsi = df['rsi'].iloc[-1]
         latest_close = df['close'].iloc[-1]
         
         if np.isnan(latest_rsi):
-            logger.warning("Giá trị RSI là NaN, bỏ qua")
             return None
             
-        logger.info(f"Giá trị RSI hiện tại của {self.symbol}: {latest_rsi:.2f}")
-        
         current_time = time.time()
+        cooldown_time = self.alert_cooldown/self.mock_speed if self.use_mock else self.alert_cooldown
         
-        # Nếu đang có vị thế, kiểm tra điều kiện thoát lệnh
+        # RSI Long signal
+        if latest_rsi < RSI_OVERSOLD:
+            if current_time - self.last_alert_time > cooldown_time:
+                return {
+                    'signal_type': 'rsi',
+                    'signal': 'long',
+                    'rsi': latest_rsi,
+                    'price': latest_close,
+                    'trigger': 'rsi_oversold',
+                    'position_size': self.position_size,
+                    'leverage': self.leverage
+                }
+                
+        # RSI Short signal  
+        elif latest_rsi > RSI_OVERBOUGHT:
+            if current_time - self.last_alert_time > cooldown_time:
+                return {
+                    'signal_type': 'rsi',
+                    'signal': 'short', 
+                    'rsi': latest_rsi,
+                    'price': latest_close,
+                    'trigger': 'rsi_overbought',
+                    'position_size': self.position_size,
+                    'leverage': self.leverage
+                }
+                
+        return None
+        
+    def check_macd_signal(self, df):
+        """Kiểm tra tín hiệu MACD độc lập"""
+        if df is None or 'macd' not in df.columns or len(df) < 2:
+            return None
+            
+        latest_macd = df['macd'].iloc[-1]
+        latest_macd_signal = df['macd_signal'].iloc[-1]
+        latest_close = df['close'].iloc[-1]
+        
+        prev_macd = df['macd'].iloc[-2]
+        prev_macd_signal = df['macd_signal'].iloc[-2]
+        
+        if any(np.isnan([latest_macd, latest_macd_signal, prev_macd, prev_macd_signal])):
+            return None
+            
+        current_time = time.time()
+        cooldown_time = self.alert_cooldown/self.mock_speed if self.use_mock else self.alert_cooldown
+        
+        # MACD Bullish crossover
+        if (prev_macd <= prev_macd_signal) and (latest_macd > latest_macd_signal):
+            if current_time - self.last_alert_time > cooldown_time:
+                return {
+                    'signal_type': 'macd',
+                    'signal': 'long',
+                    'macd': latest_macd,
+                    'macd_signal': latest_macd_signal,
+                    'macd_histogram': df['macd_histogram'].iloc[-1],
+                    'price': latest_close,
+                    'trigger': 'macd_bullish_cross',
+                    'position_size': self.position_size,
+                    'leverage': self.leverage
+                }
+                
+        # MACD Bearish crossover
+        elif (prev_macd >= prev_macd_signal) and (latest_macd < latest_macd_signal):
+            if current_time - self.last_alert_time > cooldown_time:
+                return {
+                    'signal_type': 'macd',
+                    'signal': 'short',
+                    'macd': latest_macd, 
+                    'macd_signal': latest_macd_signal,
+                    'macd_histogram': df['macd_histogram'].iloc[-1],
+                    'price': latest_close,
+                    'trigger': 'macd_bearish_cross',
+                    'position_size': self.position_size,
+                    'leverage': self.leverage
+                }
+                
+        return None
+        
+    def get_reference_signals(self, df, exclude_type=None):
+        """Lấy trạng thái các signal khác để hiển thị tham khảo"""
+        reference = {}
+        
+        if exclude_type != 'rsi' and 'rsi' in df.columns:
+            latest_rsi = df['rsi'].iloc[-1]
+            if not np.isnan(latest_rsi):
+                if latest_rsi < RSI_OVERSOLD:
+                    rsi_status = "Oversold (Tín hiệu Long)"
+                elif latest_rsi > RSI_OVERBOUGHT:
+                    rsi_status = "Overbought (Tín hiệu Short)"
+                else:
+                    rsi_status = "Neutral"
+                reference['rsi'] = {'value': latest_rsi, 'status': rsi_status}
+                
+        if exclude_type != 'macd' and 'macd' in df.columns and len(df) >= 2:
+            latest_macd = df['macd'].iloc[-1]
+            latest_macd_signal = df['macd_signal'].iloc[-1]
+            
+            if not any(np.isnan([latest_macd, latest_macd_signal])):
+                if latest_macd > latest_macd_signal:
+                    macd_status = "Bullish (Xu hướng tăng)"
+                else:
+                    macd_status = "Bearish (Xu hướng giảm)"
+                reference['macd'] = {
+                    'macd': latest_macd,
+                    'signal': latest_macd_signal,
+                    'status': macd_status
+                }
+                
+        return reference
+    
+    def check_entry_conditions(self, df):
+        """Kiểm tra điều kiện vào lệnh với các signal độc lập"""
+        if df is None:
+            return None
+            
+        # Kiểm tra điều kiện thoát lệnh trước
+        if self.current_position in ['long', 'short']:
+            return self._check_exit_conditions(df)
+            
+        # Kiểm tra các tín hiệu vào lệnh mới
+        signals_to_check = []
+        
+        if self.signal_mode in ['RSI', 'BOTH'] and self.rsi_independent:
+            rsi_signal = self.check_rsi_signal(df)
+            if rsi_signal:
+                signals_to_check.append(rsi_signal)
+                
+        if self.signal_mode in ['MACD', 'BOTH'] and self.macd_independent:
+            macd_signal = self.check_macd_signal(df)
+            if macd_signal:
+                signals_to_check.append(macd_signal)
+                
+        # Trả về signal đầu tiên được kích hoạt
+        if signals_to_check:
+            selected_signal = signals_to_check[0]  # Có thể thêm logic ưu tiên
+            
+            # Thêm thông tin tham khảo từ các signal khác
+            reference_signals = self.get_reference_signals(df, exclude_type=selected_signal['signal_type'])
+            selected_signal['reference_signals'] = reference_signals
+            
+            # Lưu thông tin entry
+            self.entry_price = selected_signal['price']
+            self.entry_time = time.time()
+            self.last_alert_time = time.time()
+            
+            return selected_signal
+            
+        # Log thông tin chỉ báo hiện tại
+        if 'rsi' in df.columns:
+            latest_rsi = df['rsi'].iloc[-1]
+            latest_close = df['close'].iloc[-1]
+            
+            macd_info = ""
+            if 'macd' in df.columns:
+                latest_macd = df['macd'].iloc[-1]
+                latest_macd_signal = df['macd_signal'].iloc[-1]
+                latest_macd_histogram = df['macd_histogram'].iloc[-1]
+                if not np.isnan(latest_macd):
+                    macd_info = f" | MACD: {latest_macd:.4f} | Signal: {latest_macd_signal:.4f} | Histogram: {latest_macd_histogram:.4f}"
+                    
+            if not np.isnan(latest_rsi):
+                logger.info(f"Chỉ báo {self.symbol}: RSI: {latest_rsi:.2f}{macd_info}")
+            
+            # Nếu đang có vị thế, thêm thông tin PnL hiện tại
+            if self.current_position in ['long', 'short'] and self.entry_price is not None:
+                current_pnl = self.get_current_pnl(latest_close)
+                logger.info(f"PnL hiện tại cho {self.symbol}: ${current_pnl:.2f}")
+            
+        return None
+
+    def _check_exit_conditions(self, df):
+        """Kiểm tra điều kiện thoát lệnh"""
+        if df is None or 'rsi' not in df.columns:
+            return None
+            
+        latest_rsi = df['rsi'].iloc[-1]
+        latest_close = df['close'].iloc[-1]
+        current_time = time.time()
+        cooldown_time = self.alert_cooldown/self.mock_speed if self.use_mock else self.alert_cooldown
+        
         if self.current_position == 'long' and latest_rsi > RSI_EXIT:
-            if current_time - self.last_alert_time > self.alert_cooldown/self.mock_speed if self.use_mock else self.alert_cooldown:
-                # Tính PnL khi đóng lệnh long
+            if current_time - self.last_alert_time > cooldown_time:
                 pnl = self.calculate_pnl(self.entry_price, latest_close, 'long')
                 self.total_pnl += pnl
                 self.trade_count += 1
                 if pnl > 0:
                     self.winning_trades += 1
-                
+                    
                 self.last_alert_time = current_time
                 return {
-                    'signal': 'exit_long', 
-                    'rsi': latest_rsi, 
+                    'signal': 'exit_long',
+                    'rsi': latest_rsi,
                     'price': latest_close,
                     'entry_price': self.entry_price,
                     'pnl': pnl,
                     'total_pnl': self.total_pnl,
                     'trade_count': self.trade_count,
-                    'win_rate': (self.winning_trades / self.trade_count) * 100 if self.trade_count > 0 else 0
+                    'win_rate': (self.winning_trades / self.trade_count) * 100
                 }
-        
+                
         elif self.current_position == 'short' and latest_rsi < RSI_EXIT:
-            if current_time - self.last_alert_time > self.alert_cooldown/self.mock_speed if self.use_mock else self.alert_cooldown:
-                # Tính PnL khi đóng lệnh short
+            if current_time - self.last_alert_time > cooldown_time:
                 pnl = self.calculate_pnl(self.entry_price, latest_close, 'short')
                 self.total_pnl += pnl
                 self.trade_count += 1
                 if pnl > 0:
                     self.winning_trades += 1
-                
+                    
                 self.last_alert_time = current_time
                 return {
-                    'signal': 'exit_short', 
-                    'rsi': latest_rsi, 
+                    'signal': 'exit_short',
+                    'rsi': latest_rsi,
                     'price': latest_close,
                     'entry_price': self.entry_price,
                     'pnl': pnl,
                     'total_pnl': self.total_pnl,
                     'trade_count': self.trade_count,
-                    'win_rate': (self.winning_trades / self.trade_count) * 100 if self.trade_count > 0 else 0
+                    'win_rate': (self.winning_trades / self.trade_count) * 100
                 }
-        
-        # Nếu không có vị thế hoặc đã thoát vị thế, kiểm tra điều kiện vào lệnh mới
-        elif (self.current_position is None or self.current_position == 'exit_long' or 
-              self.current_position == 'exit_short'):
-            
-            # Kiểm tra điều kiện long (RSI < 30)
-            if latest_rsi < RSI_OVERSOLD:
-                if current_time - self.last_alert_time > self.alert_cooldown/self.mock_speed if self.use_mock else self.alert_cooldown:
-                    # Lưu giá vào lệnh
-                    self.entry_price = latest_close
-                    self.entry_time = current_time
-                    
-                    self.last_alert_time = current_time
-                    return {
-                        'signal': 'long', 
-                        'rsi': latest_rsi, 
-                        'price': latest_close,
-                        'position_size': self.position_size,
-                        'leverage': self.leverage
-                    }
-            
-            # Kiểm tra điều kiện short (RSI > 70)
-            elif latest_rsi > RSI_OVERBOUGHT:
-                if current_time - self.last_alert_time > self.alert_cooldown/self.mock_speed if self.use_mock else self.alert_cooldown:
-                    # Lưu giá vào lệnh
-                    self.entry_price = latest_close
-                    self.entry_time = current_time
-                    
-                    self.last_alert_time = current_time
-                    return {
-                        'signal': 'short', 
-                        'rsi': latest_rsi, 
-                        'price': latest_close,
-                        'position_size': self.position_size,
-                        'leverage': self.leverage
-                    }
-        
-        # Nếu đang có vị thế, thêm thông tin PnL hiện tại
-        if self.current_position in ['long', 'short'] and self.entry_price is not None:
-            current_pnl = self.get_current_pnl(latest_close)
-            logger.info(f"PnL hiện tại cho {self.symbol}: ${current_pnl:.2f}")
-        
+                
         return None
     
     async def send_telegram_alert(self, signal_data):
@@ -415,17 +584,45 @@ class CryptoSignalBot:
                 message_thread_id = None
             
             if signal == 'long':
+                signal_type = signal_data.get('signal_type', 'combined')
+                trigger = signal_data.get('trigger', '')
                 position_size = signal_data['position_size']
                 leverage = signal_data['leverage']
-                message = (f"🚨 TÍN HIỆU LONG: {coin_name} tại giá ${price:.2f}\n"
-                          f"RSI ({RSI_WINDOW}) = {rsi_value:.2f} < {RSI_OVERSOLD} → Bị bán quá mức (oversold)\n"
-                          f"👉 Khuyến nghị: MUA VÀO (LONG)\n"
-                          f"💰 Vị thế: ${position_size} với đòn bẩy x{leverage}\n"
-                          f"🔄 Thoát lệnh khi RSI > {RSI_EXIT}")
+                
+                if signal_type == 'rsi':
+                    rsi_value = signal_data['rsi']
+                    message = (f"🚨 TÍN HIỆU LONG (RSI): {coin_name} tại giá ${price:.2f}\n"
+                              f"📊 RSI ({RSI_WINDOW}) = {rsi_value:.2f} < {RSI_OVERSOLD} → Bị bán quá mức (oversold)\n")
+                    
+                elif signal_type == 'macd':
+                    macd = signal_data['macd']
+                    macd_signal_val = signal_data['macd_signal']
+                    macd_histogram = signal_data['macd_histogram']
+                    message = (f"🚨 TÍN HIỆU LONG (MACD): {coin_name} tại giá ${price:.2f}\n"
+                              f"📈 MACD ({MACD_FAST},{MACD_SLOW},{MACD_SIGNAL}) = {macd:.4f} cắt lên {macd_signal_val:.4f} → Tín hiệu tăng\n"
+                              f"📊 Histogram = {macd_histogram:.4f}\n")
+                else:
+                    # Fallback for old format
+                    rsi_value = signal_data.get('rsi', 0)
+                    message = (f"🚨 TÍN HIỆU LONG: {coin_name} tại giá ${price:.2f}\n"
+                              f"📊 RSI ({RSI_WINDOW}) = {rsi_value:.2f} < {RSI_OVERSOLD} → Bị bán quá mức (oversold)\n")
+                
+                # Thêm thông tin tham khảo
+                if 'reference_signals' in signal_data:
+                    ref = signal_data['reference_signals']
+                    if 'rsi' in ref and signal_type != 'rsi':
+                        message += f"📊 RSI tham khảo: {ref['rsi']['value']:.2f} - {ref['rsi']['status']}\n"
+                    if 'macd' in ref and signal_type != 'macd':
+                        message += f"📈 MACD tham khảo: {ref['macd']['macd']:.4f} - {ref['macd']['status']}\n"
+                        
+                message += (f"👉 Khuyến nghị: MUA VÀO (LONG)\n"
+                           f"💰 Vị thế: ${position_size} với đòn bẩy x{leverage}\n"
+                           f"🔄 Thoát lệnh khi RSI > {RSI_EXIT}")
+                           
                 self.current_position = 'long'
                 
-                # Log signal vào file riêng
-                signal_logger.info(f"LONG_ENTRY | {coin_name} | Price: ${price:.2f} | RSI: {rsi_value:.2f} | Size: ${position_size} | Leverage: x{leverage}")
+                # Log signal
+                signal_logger.info(f"LONG_ENTRY_{signal_type.upper()} | {coin_name} | Price: ${price:.2f} | Trigger: {trigger} | Size: ${position_size} | Leverage: x{leverage}")
                 
                 # Gửi tin nhắn và lưu message ID
                 if message_thread_id:
@@ -444,17 +641,45 @@ class CryptoSignalBot:
                 self.entry_message_id = sent_message.message_id
                 
             elif signal == 'short':
+                signal_type = signal_data.get('signal_type', 'combined')
+                trigger = signal_data.get('trigger', '')
                 position_size = signal_data['position_size']
                 leverage = signal_data['leverage']
-                message = (f"🚨 TÍN HIỆU SHORT: {coin_name} tại giá ${price:.2f}\n"
-                          f"RSI ({RSI_WINDOW}) = {rsi_value:.2f} > {RSI_OVERBOUGHT} → Bị mua quá mức (overbought)\n"
-                          f"👉 Khuyến nghị: BÁN KHỐNG (SHORT)\n"
-                          f"💰 Vị thế: ${position_size} với đòn bẩy x{leverage}\n"
-                          f"🔄 Thoát lệnh khi RSI < {RSI_EXIT}")
+                
+                if signal_type == 'rsi':
+                    rsi_value = signal_data['rsi']
+                    message = (f"🚨 TÍN HIỆU SHORT (RSI): {coin_name} tại giá ${price:.2f}\n"
+                              f"📊 RSI ({RSI_WINDOW}) = {rsi_value:.2f} > {RSI_OVERBOUGHT} → Bị mua quá mức (overbought)\n")
+                              
+                elif signal_type == 'macd':
+                    macd = signal_data['macd']
+                    macd_signal_val = signal_data['macd_signal']
+                    macd_histogram = signal_data['macd_histogram']
+                    message = (f"🚨 TÍN HIỆU SHORT (MACD): {coin_name} tại giá ${price:.2f}\n"
+                              f"📉 MACD ({MACD_FAST},{MACD_SLOW},{MACD_SIGNAL}) = {macd:.4f} cắt xuống {macd_signal_val:.4f} → Tín hiệu giảm\n"
+                              f"📊 Histogram = {macd_histogram:.4f}\n")
+                else:
+                    # Fallback for old format
+                    rsi_value = signal_data.get('rsi', 0)
+                    message = (f"🚨 TÍN HIỆU SHORT: {coin_name} tại giá ${price:.2f}\n"
+                              f"📊 RSI ({RSI_WINDOW}) = {rsi_value:.2f} > {RSI_OVERBOUGHT} → Bị mua quá mức (overbought)\n")
+                
+                # Thêm thông tin tham khảo
+                if 'reference_signals' in signal_data:
+                    ref = signal_data['reference_signals']
+                    if 'rsi' in ref and signal_type != 'rsi':
+                        message += f"📊 RSI tham khảo: {ref['rsi']['value']:.2f} - {ref['rsi']['status']}\n"
+                    if 'macd' in ref and signal_type != 'macd':
+                        message += f"📉 MACD tham khảo: {ref['macd']['macd']:.4f} - {ref['macd']['status']}\n"
+                        
+                message += (f"👉 Khuyến nghị: BÁN KHỐNG (SHORT)\n"
+                           f"💰 Vị thế: ${position_size} với đòn bẩy x{leverage}\n"
+                           f"🔄 Thoát lệnh khi RSI < {RSI_EXIT}")
+                           
                 self.current_position = 'short'
                 
-                # Log signal vào file riêng
-                signal_logger.info(f"SHORT_ENTRY | {coin_name} | Price: ${price:.2f} | RSI: {rsi_value:.2f} | Size: ${position_size} | Leverage: x{leverage}")
+                # Log signal
+                signal_logger.info(f"SHORT_ENTRY_{signal_type.upper()} | {coin_name} | Price: ${price:.2f} | Trigger: {trigger} | Size: ${position_size} | Leverage: x{leverage}")
                 
                 # Gửi tin nhắn và lưu message ID
                 if message_thread_id:
@@ -594,8 +819,9 @@ class CryptoSignalBot:
             
     async def run(self):
         """Chạy bot"""
-        logger.info(f"Bắt đầu chạy bot giám sát RSI cho {self.symbol} với chiến lược Long/Short")
-        logger.info(f"Chiến lược: Long khi RSI < {RSI_OVERSOLD}, Short khi RSI > {RSI_OVERBOUGHT}, Thoát lệnh khi RSI = {RSI_EXIT}")
+        logger.info(f"Bắt đầu chạy bot giám sát RSI + MACD cho {self.symbol} với chiến lược Long/Short")
+        logger.info(f"Chiến lược RSI: Long khi RSI < {RSI_OVERSOLD}, Short khi RSI > {RSI_OVERBOUGHT}, Thoát lệnh khi RSI = {RSI_EXIT}")
+        logger.info(f"Chiến lược MACD: Kết hợp với tín hiệu MACD crossover và divergence (Tham số: {MACD_FAST},{MACD_SLOW},{MACD_SIGNAL})")
         logger.info(f"Cấu hình giao dịch: Vị thế ${self.position_size} với đòn bẩy x{self.leverage}")
         
         # Lấy thông tin chat khi khởi động bot
@@ -608,6 +834,9 @@ class CryptoSignalBot:
                 
                 # Tính RSI
                 df = self.calculate_rsi(df)
+                
+                # Tính MACD
+                df = self.calculate_macd(df)
                 
                 # Kiểm tra điều kiện
                 signal_data = self.check_entry_conditions(df)
@@ -791,14 +1020,16 @@ if __name__ == "__main__":
     logger.info(f"   - Tổng quát: logs/crypto_signal_bot.log")
     logger.info(f"   - Trading signals: logs/trading_signals.log")
     logger.info(f"🔧 Chế độ: {'Mock (Test)' if args.mock else 'Live Trading'}")
+    logger.info(f"🎯 Signal Mode: {SIGNAL_MODE} | RSI Independent: {RSI_INDEPENDENT} | MACD Independent: {MACD_INDEPENDENT}")
     logger.info(f"📊 Cặp giao dịch: {', '.join(TRADING_PAIRS)}")
     logger.info(f"⚙️  Cấu hình RSI: Window={RSI_WINDOW}, Timeframe={RSI_TIMEFRAME}")
-    logger.info(f"📈 Ngưỡng: Oversold<{RSI_OVERSOLD}, Overbought>{RSI_OVERBOUGHT}, Exit={RSI_EXIT}")
+    logger.info(f"📈 Ngưỡng RSI: Oversold<{RSI_OVERSOLD}, Overbought>{RSI_OVERBOUGHT}, Exit={RSI_EXIT}")
+    logger.info(f"📊 Cấu hình MACD: Fast={MACD_FAST}, Slow={MACD_SLOW}, Signal={MACD_SIGNAL}")
     logger.info("=" * 80)
     
     # Log signal khởi động vào file trading signals
     signal_logger = logging.getLogger('trading_signals')
-    signal_logger.info(f"BOT_START | Mode: {'Mock' if args.mock else 'Live'} | Pairs: {','.join(TRADING_PAIRS)} | RSI_Config: {RSI_WINDOW}_{RSI_TIMEFRAME}_{RSI_OVERSOLD}_{RSI_OVERBOUGHT}_{RSI_EXIT}")
+    signal_logger.info(f"BOT_START | Mode: {'Mock' if args.mock else 'Live'} | Pairs: {','.join(TRADING_PAIRS)} | RSI_Config: {RSI_WINDOW}_{RSI_TIMEFRAME}_{RSI_OVERSOLD}_{RSI_OVERBOUGHT}_{RSI_EXIT} | MACD_Config: {MACD_FAST}_{MACD_SLOW}_{MACD_SIGNAL}")
     
     try:
         multi_bot = MultiPairSignalBot(trading_pairs=TRADING_PAIRS, use_mock=args.mock)

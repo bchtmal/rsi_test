@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import pandas as pd
 import ccxt
 from ta.momentum import RSIIndicator
+from ta.trend import MACD
 from langchain.agents import Tool
 from langchain.agents import initialize_agent
 from langchain.agents import AgentType
@@ -27,6 +28,13 @@ class RSIInput(BaseModel):
     symbol: str = Field(description="Cặp tiền cần phân tích, ví dụ: BTC/USDT, ETH/USDT")
     timeframe: str = Field(default="1h", description="Khung thời gian phân tích: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w")
     period: int = Field(default=14, description="Số nến dùng để tính RSI")
+
+class MACDInput(BaseModel):
+    symbol: str = Field(description="Cặp tiền cần phân tích, ví dụ: BTC/USDT, ETH/USDT")
+    timeframe: str = Field(default="1h", description="Khung thời gian phân tích: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w")
+    fast_period: int = Field(default=12, description="Số nến cho EMA nhanh")
+    slow_period: int = Field(default=26, description="Số nến cho EMA chậm")
+    signal_period: int = Field(default=9, description="Số nến cho đường Signal")
 
 def parse_timeframe(text: str) -> str:
     """Parse timeframe from user input"""
@@ -89,6 +97,58 @@ def get_rsi(input_str: str) -> Dict:
     except Exception as e:
         return {'error': str(e)}
 
+def get_macd(input_str: str) -> Dict:
+    """Calculate MACD for a given symbol and timeframe"""
+    try:
+        # Parse input string
+        input_data = {}
+        
+        # Extract symbol
+        common_symbols = ["btc", "eth", "bnb", "xrp", "sol", "ada"]
+        input_str = input_str.lower()
+        for symbol in common_symbols:
+            if symbol in input_str:
+                input_data["symbol"] = f"{symbol.upper()}/USDT"
+                break
+        if "symbol" not in input_data:
+            input_data["symbol"] = "BTC/USDT"  # default
+            
+        # Extract timeframe
+        input_data["timeframe"] = parse_timeframe(input_str)
+        
+        # Create validated input
+        macd_input = MACDInput(**input_data)
+        
+        # Fetch OHLCV data
+        ohlcv = exchange.fetch_ohlcv(
+            macd_input.symbol, 
+            macd_input.timeframe, 
+            limit=100
+        )
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        
+        # Calculate MACD
+        macd_indicator = MACD(
+            close=df['close'], 
+            window_fast=macd_input.fast_period,
+            window_slow=macd_input.slow_period,
+            window_sign=macd_input.signal_period
+        )
+        
+        macd_line = macd_indicator.macd()
+        signal_line = macd_indicator.macd_signal()
+        histogram = macd_indicator.macd_diff()
+        
+        return {
+            'macd': round(float(macd_line.iloc[-1]), 4),
+            'signal': round(float(signal_line.iloc[-1]), 4),
+            'histogram': round(float(histogram.iloc[-1]), 4),
+            'symbol': macd_input.symbol,
+            'timeframe': macd_input.timeframe
+        }
+    except Exception as e:
+        return {'error': str(e)}
+
 def create_agent():
     # Initialize LLM
     llm = ChatGoogleGenerativeAI(
@@ -115,6 +175,16 @@ def create_agent():
             - "eth 4h" -> Tính RSI ETH/USDT khung 4 giờ
             - "sol ngày" -> Tính RSI SOL/USDT khung ngày
             Các khung thời gian hỗ trợ: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w"""
+        ),
+        Tool(
+            name="get_macd",
+            func=get_macd,
+            description="""Tính chỉ số MACD cho một cặp tiền với khung thời gian tùy chọn.
+            Ví dụ input:
+            - "btc macd khung 1h" -> Tính MACD BTC/USDT khung 1 giờ
+            - "eth macd 4h" -> Tính MACD ETH/USDT khung 4 giờ
+            - "sol macd ngày" -> Tính MACD SOL/USDT khung ngày
+            Các khung thời gian hỗ trợ: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w"""
         )
     ]
 
@@ -134,8 +204,16 @@ def create_agent():
     - RSI < 30: thị trường đang quá bán, có thể có cơ hội mua xinh đẹp nè! 📈
     - RSI = 50: thị trường đang cân bằng tốt ✨
     
+    Khi phân tích MACD:
+    - MACD > Signal: xu hướng tăng đang mạnh nha! 📈
+    - MACD < Signal: xu hướng giảm đang yếu rồi đó! 📉
+    - Histogram > 0: động lực tăng giá đang mạnh 💚
+    - Histogram < 0: động lực giảm giá đang yếu 💛
+    - MACD cắt lên Signal: tín hiệu mua đẹp đấy! ✨
+    - MACD cắt xuống Signal: tín hiệu bán cẩn thận nha! ⚠️
+    
     Format trả lời của mình sẽ có:
-    1. Chỉ số RSI hiện tại 🎯
+    1. Chỉ số kỹ thuật hiện tại (RSI/MACD) 🎯
     2. Phân tích ý nghĩa của chỉ số một cách dễ hiểu 💡
     3. Nhận định xu hướng thị trường 🌈
     4. Các lưu ý về rủi ro quan trọng 💕
