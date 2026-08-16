@@ -1,47 +1,45 @@
+markdown
 # Crypto Signal Bot
 
-Bot giám sát và cảnh báo tín hiệu giao dịch tiền điện tử qua Telegram. Bot hỗ trợ phân tích kỹ thuật kết hợp RSI và MACD để đưa ra tín hiệu giao dịch chính xác hơn.
+Бот для мониторинга и оповещения о торговых сигналах криптовалют через Telegram. Бот поддерживает технический анализ с комбинированным использованием RSI и MACD для выдачи более точных торговых сигналов.
 
-## Tính năng
+## 📌 Возможности
 
-- Kết nối Binance qua CCXT để lấy dữ liệu giá theo thời gian thực
-- Tính toán chỉ báo RSI và MACD sử dụng thư viện TA
-- Chiến lược giao dịch kết hợp RSI + MACD:
-  - **Long**: RSI < 30 (oversold) + MACD bullish (MACD > Signal hoặc có bullish crossover)
-  - **Short**: RSI > 70 (overbought) + MACD bearish (MACD < Signal hoặc có bearish crossover)
-  - **Exit**: RSI về mức 50 (neutral)
-- Gửi cảnh báo chi tiết qua Telegram với thông tin RSI và MACD
-- Hỗ trợ nhiều cặp tiền đồng thời
-- Tính toán PnL và thống kê giao dịch
-- Có thể tùy chỉnh tất cả các thông số kỹ thuật
+- Подключение к Binance через библиотеку CCXT для получения данных о ценах в реальном времени
+- Расчёт индикаторов RSI и MACD с использованием библиотеки TA
+- Торговая стратегия, объединяющая RSI + MACD:
+  - **Long (покупка)**: RSI < 30 (перепроданность) + бычий MACD (MACD > Signal или бычье пересечение)
+  - **Short (продажа)**: RSI > 70 (перекупленность) + медвежий MACD (MACD < Signal или медвежье пересечение)
+  - **Выход из позиции**: RSI достигает уровня 50 (нейтральный)
+- Отправка детальных оповещений через Telegram с информацией о RSI и MACD
+- Поддержка одновременного отслеживания нескольких торговых пар
+- Расчёт PnL (прибыли/убытков) и статистики по сделкам
+- Возможность настройки всех технических параметров
 
-## Yêu cầu
+## ⚙️ Требования
 
 - Python 3.8+
-- Các thư viện trong file requirements.txt
-- Tài khoản Binance (API key và Secret key)
-- Bot Telegram đã được tạo
+- Библиотеки из файла `requirements.txt`
+- Аккаунт Binance (API-ключ и секретный ключ)
+- Созданный Telegram-бот
 
-## Cài đặt
+## 🚀 Установка
 
-1. Clone repository:
-```
-git clone https://github.com/your-username/crypto-signal-bot.git
-cd crypto-signal-bot
-```
+1. Клонируйте репозиторий:
+   ```bash
+   git clone https://github.com/your-username/crypto-signal-bot.git
+   cd crypto-signal-bot
+Установите требуемые библиотеки:
 
-2. Cài đặt các thư viện yêu cầu:
-```
+bash
 pip install -r requirements.txt
-```
+Создайте файл .env из примера:
 
-3. Tạo file `.env` từ file mẫu:
-```
+bash
 cp .env-example .env
-```
+Обновите информацию в файле .env, указав свои API-ключи:
 
-4. Cập nhật các thông tin trong file `.env` với API key của bạn:
-```
+env
 # Binance API keys
 BINANCE_API_KEY=your_binance_api_key
 BINANCE_SECRET_KEY=your_binance_secret_key
@@ -71,86 +69,62 @@ COIN_SYMBOL=BTC/USDT
 PROXY_URL=
 PROXY_USERNAME=
 PROXY_PASSWORD=
-```
+🤖 Создание Telegram-бота
+Откройте Telegram и найдите @BotFather
 
-## Hướng dẫn tạo Telegram Bot
+Отправьте команду /newbot и следуйте инструкциям
 
-1. Mở Telegram và tìm kiếm `@BotFather`
-2. Gửi lệnh `/newbot` và làm theo hướng dẫn
-3. Sau khi tạo xong, bạn sẽ nhận được `TELEGRAM_BOT_TOKEN`
-4. Để lấy `TELEGRAM_CHAT_ID`, tạo một nhóm chat, thêm bot vào nhóm, và sử dụng API để lấy chat ID
+После создания вы получите TELEGRAM_BOT_TOKEN
 
-## Cấu hình Proxy (Tùy chọn)
+Чтобы получить TELEGRAM_CHAT_ID, создайте групповой чат, добавьте туда бота и используйте API для получения ID чата
 
-Nếu bạn cần sử dụng proxy để kết nối Telegram, hãy cấu hình trong file `.env`:
+🌐 Настройка прокси (опционально)
+Если для подключения к Telegram вам нужен прокси-сервер, настройте его в файле .env:
 
-```
+env
 PROXY_URL=http://proxy-server:8080
-PROXY_USERNAME=your_username  # Nếu proxy yêu cầu authentication
-PROXY_PASSWORD=your_password  # Nếu proxy yêu cầu authentication
-```
+PROXY_USERNAME=your_username  # Если прокси требует аутентификации
+PROXY_PASSWORD=your_password  # Если прокси требует аутентификации
+Подробная инструкция в файле PROXY_GUIDE.md.
 
-Xem hướng dẫn chi tiết trong file [PROXY_GUIDE.md](PROXY_GUIDE.md).
-
-### Test kết nối proxy
-
-```
+Проверка подключения через прокси
+bash
 python test_proxy.py
-```
-
-## Chạy Bot
-
-### Bot giám sát RSI + MACD (Trading Bot):
-```
+▶️ Запуск бота
+Торговый бот (мониторинг RSI + MACD):
+bash
 python main.py
-```
-
-### Bot Telegram chat (AI Assistant):
-```
+Telegram-бот с ИИ-ассистентом (чат-бот):
+bash
 python crypto_agent.py
-```
+Торговый бот будет автоматически запущен и будет отправлять оповещения в Telegram при обнаружении комбинированных сигналов RSI и MACD.
 
-Bot trading sẽ tự động chạy và gửi cảnh báo qua Telegram khi có tín hiệu kết hợp từ RSI và MACD.
-
-### Chạy với dữ liệu mock để test:
-```
+Запуск с тестовыми (mock) данными:
+bash
 python main.py --mock
-```
+📊 Добавление других торговых пар
+Вы можете изменить торговые пары в файле .env, отредактировав переменную COIN_SYMBOL, например:
 
-## Thêm cặp tiền khác
-
-Bạn có thể thay đổi cặp tiền trong file `.env` bằng cách sửa biến `COIN_SYMBOL`, ví dụ:
-```
+env
 COIN_SYMBOL=SOL/USDT
-```
-
-## Tùy chỉnh cảnh báo
-
-### Cấu hình RSI:
-```
-RSI_WINDOW=14        # Số nến để tính RSI
-RSI_OVERSOLD=30      # Ngưỡng quá bán (tín hiệu long)
-RSI_OVERBOUGHT=70    # Ngưỡng quá mua (tín hiệu short)
-RSI_EXIT=50          # Ngưỡng thoát lệnh
-RSI_TIMEFRAME=4h     # Khung thời gian (1m, 5m, 15m, 1h, 4h, 1d)
-```
-
-### Cấu hình MACD:
-```
-MACD_FAST=12         # EMA nhanh
-MACD_SLOW=26         # EMA chậm
-MACD_SIGNAL=9        # EMA của đường Signal
-```
-
-### Cấu hình cặp giao dịch:
-```
+🔧 Настройка оповещений
+Параметры RSI:
+env
+RSI_WINDOW=14        # Количество свечей для расчёта RSI
+RSI_OVERSOLD=30      # Уровень перепроданности (сигнал на покупку)
+RSI_OVERBOUGHT=70    # Уровень перекупленности (сигнал на продажу)
+RSI_EXIT=50          # Уровень выхода из позиции
+RSI_TIMEFRAME=4h     # Временной интервал (1m, 5m, 15m, 1h, 4h, 1d)
+Параметры MACD:
+env
+MACD_FAST=12         # Быстрая EMA
+MACD_SLOW=26         # Медленная EMA
+MACD_SIGNAL=9        # EMA сигнальной линии
+Список торговых пар:
+env
 TRADING_PAIRS=BTC/USDT,ETH/USDT,SOL/USDT,ADA/USDT
-```
+🤝 Вклад в проект
+Пожалуйста, присылайте pull request или сообщайте об ошибках через раздел Issues.
 
-## Đóng góp
-
-Vui lòng gửi pull request hoặc báo lỗi qua Issues.
-
-## License
-
-MIT 
+📄 Лицензия
+MIT
