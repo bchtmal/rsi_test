@@ -18,6 +18,9 @@ import argparse
 import datetime
 import asyncio
 
+from get_pairs import get_pairs
+
+DATA = {}
 
 # Настройка логирования с файловым обработчиком
 def setup_logging():
@@ -97,6 +100,8 @@ RSI_TIMEFRAME = os.getenv('RSI_TIMEFRAME', '1h')
 
 # Изменение конфигурации для поддержки нескольких торговых пар
 TRADING_PAIRS = os.getenv('TRADING_PAIRS', 'BTC/USDT,ETH/USDT,SOL/USDT,SUI/USDT').split(',')
+TRADING_PAIRS = get_pairs()
+
 
 # Уровни RSI для стратегии
 RSI_OVERSOLD = int(os.getenv('RSI_OVERSOLD', 30))
@@ -240,6 +245,7 @@ class CryptoSignalBot:
             raise
 
     def _init_telegram_bot(self):
+        return
         """Инициализация Telegram бота с поддержкой прокси"""
         try:
             if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -509,6 +515,8 @@ class CryptoSignalBot:
 
             if not np.isnan(latest_rsi):
                 logger.info(f"Индикаторы {self.symbol}: RSI: {latest_rsi:.2f}{macd_info}")
+                DATA[self.symbol] = latest_rsi
+
 
             # Если есть открытая позиция, добавляем информацию о текущем PnL
             if self.current_position in ['long', 'short'] and self.entry_price is not None:
@@ -571,6 +579,7 @@ class CryptoSignalBot:
 
     async def send_telegram_alert(self, signal_data):
         """Отправка оповещения через Telegram"""
+        return
         try:
             coin_name = self.symbol.split('/')[0]
             signal = signal_data['signal']
@@ -826,14 +835,15 @@ class CryptoSignalBot:
             logger.error(f"Ошибка отправки оповещения в Telegram для {self.symbol}: {e}")
             return False
 
+
     async def run(self):
         """Запуск бота"""
         logger.info(f"Запуск бота мониторинга RSI + MACD для {self.symbol} со стратегией Long/Short")
-        logger.info(
-            f"Стратегия RSI: Лонг при RSI < {RSI_OVERSOLD}, Шорт при RSI > {RSI_OVERBOUGHT}, Выход при RSI = {RSI_EXIT}")
-        logger.info(
-            f"Стратегия MACD: Комбинирование с сигналами кроссовера и дивергенции MACD (Параметры: {MACD_FAST},{MACD_SLOW},{MACD_SIGNAL})")
-        logger.info(f"Конфигурация торговли: Позиция ${self.position_size} с плечом x{self.leverage}")
+        # logger.info(
+        #     f"Стратегия RSI: Лонг при RSI < {RSI_OVERSOLD}, Шорт при RSI > {RSI_OVERBOUGHT}, Выход при RSI = {RSI_EXIT}")
+        # logger.info(
+        #     f"Стратегия MACD: Комбинирование с сигналами кроссовера и дивергенции MACD (Параметры: {MACD_FAST},{MACD_SLOW},{MACD_SIGNAL})")
+        # logger.info(f"Конфигурация торговли: Позиция ${self.position_size} с плечом x{self.leverage}")
 
         # Получаем информацию о чате при запуске бота
         await self.get_chat_info()
@@ -863,6 +873,8 @@ class CryptoSignalBot:
                 # Ожидание перед следующей проверкой (5 минут в реальном времени или быстрее при использовании mock)
                 sleep_time = 300 / self.mock_speed if self.use_mock else 300
                 logger.info(f"Ожидание {sleep_time:.1f} секунд перед следующей проверкой {self.symbol}...")
+                print([(item[0], int(item[1])) for item in sorted(DATA.items(), key=lambda x: -x[1])])
+                break # остановка после одного цикла
                 await asyncio.sleep(sleep_time)
 
         except KeyboardInterrupt:
@@ -890,6 +902,7 @@ class CryptoSignalBot:
         }
 
     async def get_chat_info(self):
+        return
         """Получение и логирование детальной информации о чате"""
         try:
             # Разделяем chat_id и message_thread_id, если они указаны
